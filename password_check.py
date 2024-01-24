@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 # -*- encoding: utf-8; py-indent-offset: 4 -*-
 """
 This module checks your list of passwords at https://haveibeenpwned.com/
@@ -6,13 +6,18 @@ and returns how many times the password of a user has been found in the
 database.
 """
 
+from collections import namedtuple
+from hashlib import sha1
+import requests
+from pathlib import Path
+
+
 class CheckPwned(object):
     """
     Loads and checks a set of logins if they have been pwned.
     """
 
     def __init__(self):
-        from collections import namedtuple
         self.hash_elements = "hash, pre, post"
         self.answer_elements = "is_known, count"
         self.elements = namedtuple("elements", self.hash_elements)
@@ -22,13 +27,12 @@ class CheckPwned(object):
         self._vulnerable = []
 
     def _create_hashes(self, passwords):
-        from hashlib import sha1
         def _create_hash(password):
             psswd = sha1()
-            psswd.update(password)
+            psswd.update(bytes(password, "UTF-8"))
             return psswd.hexdigest()
 
-        for user, password in passwords.iteritems():
+        for user, password in passwords.items():
             psswd_hash = _create_hash(password)
             prefix = psswd_hash[:5].upper()
             postfix = psswd_hash[5:].upper()
@@ -37,7 +41,7 @@ class CheckPwned(object):
     def _is_vulnerable(self, answer, post):
         for element in answer:
             if post in element:
-                count = int(element.split(':')[1])
+                count = int(element.split(b":")[1])
                 return self.hash_answer(is_known=True, count=count)
         return self.hash_answer(is_known=False, count=None)
 
@@ -48,11 +52,13 @@ class CheckPwned(object):
         self._create_hashes(passwords)
 
     def _check_hashes(self):
-        import requests
-        for user, hash_list in self.hashes.iteritems():
-            check_answer = requests.get('https://api.pwnedpasswords.com/range/%s' % hash_list.pre)
-            check_answer = check_answer.content.split('\r\n')
-            element = self._is_vulnerable(check_answer, hash_list.post)
+        for user, hash_list in self.hashes.items():
+            check_answer = requests.get(
+                f"https://api.pwnedpasswords.com/range/{hash_list.pre}",
+                timeout=10,
+            )
+            check_answer = list(check_answer.content.split(b"\r\n"))
+            element = self._is_vulnerable(check_answer, bytes(hash_list.post, "UTF-8"))
             if element.is_known:
                 self._vulnerable.append((user, element.count))
         return self._vulnerable
@@ -63,7 +69,8 @@ class CheckPwned(object):
         """
         result = self._check_hashes()
         for user, count in result:
-            print "User %s uses a leaked password. Used in %d entries." % (user, count)
+            print(f"User {user} uses a leaked password. Used in {count} entries.")
+
 
 def main():
     """
@@ -79,22 +86,20 @@ def main():
     import csv
     import sys
 
-    if file('password_list.csv'):
-        csv_file = 'password_list.csv'
-    elif len(sys.argv) > 1:
-        csv_file = sys.argv[1]
-    else:
-        csv_file = raw_input("CSV File with Passwords: ")
+    csv_file = (
+        "password_list.csv" if Path("password_list.csv").is_file() else sys.argv[1]
+    )
 
     creds_to_check = {}
 
-    with open(csv_file, mode='r') as content:
+    with open(csv_file, mode="r", encoding="UTF-8") as content:
         csv_reader = csv.DictReader(content)
         for line in csv_reader:
-            creds_to_check.setdefault(line.get('Username'), line.get('Password'))
+            creds_to_check.setdefault(line.get("Username"), line.get("Password"))
 
     psswd_check = CheckPwned()
     psswd_check.load(creds_to_check)
     psswd_check.result()
+
 
 main()
